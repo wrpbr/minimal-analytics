@@ -4,10 +4,12 @@
  *
  * -------------------------------- */
 
-function debounce(callback: TimerHandler, frequency = 300, timer = 0) {
-  return (...args) => (
-    clearTimeout(timer), (timer = setTimeout(callback, frequency, ...args))
-  );
+function debounce<Args extends unknown[]>(callback: (...args: Args) => void, frequency = 300) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return (...args: Args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => callback(...args), frequency);
+  };
 }
 
 /* -----------------------------------
@@ -65,7 +67,7 @@ function getScrollPercentage() {
 
   const trackLength = documentHeight - window.innerHeight;
 
-  return Math.floor(Math.abs(scrollTop / trackLength) * 100);
+  return trackLength > 0 ? Math.floor(Math.max(0, scrollTop / trackLength) * 100) : 0;
 }
 
 /* -----------------------------------
@@ -99,13 +101,13 @@ function getUrlData(urlValue?: string) {
   let isExternal = false;
 
   try {
-    ({ hostname, pathname } = (urlValue && new URL(urlValue)) || {});
+    ({ hostname, pathname } = (urlValue && new URL(urlValue, window.location.href)) || {});
   } catch {
     // no-op
   }
 
   if (hostname) {
-    isExternal = hostname !== window.location.host;
+    isExternal = hostname !== window.location.hostname;
   }
 
   return { isExternal, hostname, pathname };

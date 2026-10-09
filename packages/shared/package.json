@@ -23,10 +23,7 @@
     "url": "git+https://github.com/jahilldev/minimal-analytics.git"
   },
   "scripts": {
-    "build": "tsc",
-    "watch": "tsc -w",
-    "lint": "eslint",
-    "test": "jest"
+    "test": "pnpm --workspace-root test"
   },
   "bugs": {
     "url": "https://github.com/jahilldev/minimal-analytics/issues"

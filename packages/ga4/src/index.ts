@@ -1,17 +1,16 @@
 import {
   debounce,
   getDocument,
-  getClientId,
-  getSessionId,
-  getSessionState,
   getScrollPercentage,
   getRandomId,
   isTargetElement,
   getUrlData,
   getEventParams,
 } from '@minimal-analytics/shared';
-import type { EventParams } from '@minimal-analytics/shared';
 import { param, files } from './model';
+import { getTrackingState } from './state';
+import { analyticsGranted, permittedParameter, sanitizeUrl } from './privacy';
+import { send } from './transport';
 
 /* -----------------------------------
  *
@@ -27,7 +26,14 @@ declare global {
       analyticsEndpoint?: string;
       trackingId?: string;
       autoTrack?: boolean;
+      analyticsStorage?: 'granted' | 'denied';
+      sessionTimeout?: number;
+      trackForms?: boolean;
+      trackNavigation?: boolean;
+      searchTracking?: boolean;
+      collectTitle?: boolean;
     };
+    dataLayer?: unknown[];
   }
 }
 
@@ -37,10 +43,14 @@ declare global {
  *
  * -------------------------------- */
 
-interface IProps {
+type ParamValue = string | number | boolean | undefined | null;
+type EventParams = Record<string, ParamValue> | [string, ParamValue][];
+
+interface TrackOptions {
   type?: string;
   event?: EventParams;
   debug?: boolean;
+  keyEvent?: boolean;
 }
 
 /* -----------------------------------
@@ -58,8 +68,16 @@ const clickTargets = 'a, button, input[type=submit], input[type=button]';
 let clickHandler: EventListener;
 let scrollHandler: EventListener;
 let unloadHandler: EventListener;
-let engagementTimes = [[Date.now()]];
+let activeSince: number | undefined;
+let activeMilliseconds = 0;
 let trackCalled = false;
+let pageId = getRandomId();
+let hitCount = 0;
+let lastPage = '';
+let previousPage = '';
+let sentEngagement = 0;
+let scrolled = false;
+const startedForms = new WeakSet<HTMLFormElement>();
 
 /* -----------------------------------
  *
@@ -82,7 +100,7 @@ const eventKeys = {
  *
  * -------------------------------- */
 
-function getArguments(args: any[]): [string | undefined, IProps] {
+function getArguments(args: [string | TrackOptions | undefined, TrackOptions?]): [string | undefined, TrackOptions] {
   const globalId = window.minimalAnalytics?.trackingId;
   const trackingId = typeof args[0] === 'string' ? args[0] : globalId;
   const props = typeof args[0] === 'object' ? args[0] : args[1] || {};
@@ -96,24 +114,22 @@ function getArguments(args: any[]): [string | undefined, IProps] {
  *
  * -------------------------------- */
 
-function getEventMeta({ type = '', event }: Pick<IProps, 'type' | 'event'>) {
-  const searchString = document.location.search;
-  const searchParams = new URLSearchParams(searchString);
-
-  const searchResults = searchTerms.some((term) =>
-    new RegExp(`[\?|&]${term}=`, 'g').test(searchString)
-  );
-
-  const eventName = searchResults ? eventKeys.viewSearchResults : type;
-  const searchTerm = searchTerms.find((term) => searchParams.get(term));
-
-  let eventParams = [
-    [param.eventName, eventName],
-    [`${param.eventParam}.search_term`, searchTerm || ''],
-  ];
+function getEventMeta({ type = '', event }: Pick<TrackOptions, 'type' | 'event'>) {
+  let eventParams = [[param.eventName, type]];
 
   if (event) {
-    eventParams = eventParams.concat(getEventParams(event));
+    const values = Array.isArray(event) ? Object.fromEntries(event) : event;
+    const protectedKeys = new Set([
+      'v', 'tid', 'cid', 'sid', 'sct', 'seg', '_ss', '_fv', '_p', '_s', 'en',
+      'gcs', 'gcd', 'npa', '_c', '_et',
+    ]);
+    for (const [key, value] of getEventParams(event)) {
+      if (!key || value == null || protectedKeys.has(key) || !permittedParameter(key)) continue;
+      const normalized = key.startsWith('ep.') || key.startsWith('epn.')
+        || ['dl', 'dr', 'dt'].includes(key)
+        ? key : `${typeof values[key] === 'number' ? 'epn' : 'ep'}.${key}`;
+      eventParams.push([normalized, value]);
+    }
   }
 
   return eventParams;
@@ -125,34 +141,54 @@ function getEventMeta({ type = '', event }: Pick<IProps, 'type' | 'event'>) {
  *
  * -------------------------------- */
 
-function getQueryParams(trackingId: string, { type, event, debug }: IProps) {
+function getQueryParams(trackingId: string, { type, event, debug, keyEvent }: TrackOptions) {
   const { location, referrer, title } = getDocument();
-  const { firstVisit, sessionStart, sessionCount } = getSessionState(!trackCalled);
+  let totalEngagement = getActiveTime();
+  const { id, firstVisit, sessionStart, session } = getTrackingState(
+    trackingId, type === eventKeys.pageView, totalEngagement, keyEvent,
+  );
+  if (sessionStart) {
+    activeMilliseconds = 0;
+    activeSince = document.visibilityState === 'hidden' ? undefined : Date.now();
+    sentEngagement = 0;
+    totalEngagement = 0;
+  }
   const screen = self.screen || ({} as Screen);
 
   let params = [
     [param.protocolVersion, '2'],
     [param.trackingId, trackingId],
-    [param.pageId, getRandomId()],
+    [param.pageId, pageId],
     [param.language, (navigator.language || '').toLowerCase()],
-    [param.clientId, getClientId()],
-    [param.firstVisit, firstVisit],
-    [param.hitCount, '1'],
-    [param.sessionId, getSessionId()],
-    [param.sessionCount, sessionCount],
-    [param.sessionEngagement, '1'],
-    [param.sessionStart, sessionStart],
+    [param.clientId, id],
+    [param.firstVisit, firstVisit ? '1' : ''],
+    [param.hitCount, `${++hitCount}`],
+    [param.sessionId, session.id],
+    [param.sessionCount, `${session.count}`],
+    [param.sessionEngagement, session.engaged ? '1' : '0'],
+    [param.sessionStart, sessionStart ? '1' : ''],
     [param.debug, debug ? '1' : ''],
-    [param.referrer, referrer],
+    [param.referrer, previousPage || referrer],
     [param.location, location],
-    [param.title, title],
+    [param.title, window.minimalAnalytics?.collectTitle ? title : ''],
     [param.screenResolution, `${screen.width}x${screen.height}`],
+    [param.enagementTime, `${Math.max(0, totalEngagement - sentEngagement)}`],
+    ['gcs', 'G101'],
+    ['npa', '1'],
+    ['_c', keyEvent ? '1' : ''],
   ];
 
   params = params.concat(getEventMeta({ type, event }));
   params = params.filter(([, value]) => value);
 
-  return new URLSearchParams(params);
+  // set() replaces an override; appending would retain the unsafe original URL.
+  const query = new URLSearchParams();
+  for (const [key, value] of params) {
+    if (value == null || value === '') continue;
+    query.set(key, ['dl', 'dr'].includes(key) || key.endsWith('_url') ? sanitizeUrl(value) : value);
+  }
+  sentEngagement = totalEngagement;
+  return query;
 }
 
 /* -----------------------------------
@@ -162,11 +198,7 @@ function getQueryParams(trackingId: string, { type, event, debug }: IProps) {
  * -------------------------------- */
 
 function getActiveTime() {
-  const timeActive = engagementTimes
-    .reduce((result, [visible, hidden = Date.now()]) => (result += hidden - visible), 0)
-    .toString();
-
-  return timeActive;
+  return activeMilliseconds + (activeSince === undefined ? 0 : Math.max(0, Date.now() - activeSince));
 }
 
 /* -----------------------------------
@@ -176,6 +208,7 @@ function getActiveTime() {
  * -------------------------------- */
 
 function onClickEvent(trackingId: string, event: Event) {
+  if (!analyticsGranted()) return;
   const targetElement = isTargetElement(event.target as Element, clickTargets);
   const tagName = targetElement?.tagName?.toLowerCase();
   const elementType = tagName === 'a' ? 'link' : tagName;
@@ -185,30 +218,27 @@ function onClickEvent(trackingId: string, event: Event) {
 
   const { isExternal, hostname, pathname } = getUrlData(fileUrl);
   const isInternalLink = elementType === 'link' && !isExternal;
-  const [fileExtension] = fileUrl?.match(new RegExp(files.join('|'), 'g')) || [];
+  const fileExtension = pathname?.match(new RegExp(`\\.(${files.join('|')})$`, 'i'))?.[1]?.toLowerCase();
 
   const eventName = fileExtension ? eventKeys.fileDownload : eventKeys.click;
   const elementParam = `${param.eventParam}.${elementType}`;
 
-  if (!targetElement || (isInternalLink && !fileExtension)) {
+  if (!targetElement || targetElement.closest('[data-analytics-ignore]')
+    || (isInternalLink && !fileExtension) || (!isExternal && !fileExtension)) {
     return;
   }
 
   let eventParams: EventParams = [
     [`${elementParam}_id`, targetElement.id],
     [`${elementParam}_classes`, targetElement.className],
-    [`${elementParam}_name`, targetElement?.getAttribute('name')?.trim()],
-    [`${elementParam}_text`, targetElement.textContent?.trim()],
-    [`${elementParam}_value`, targetElement?.getAttribute('value')?.trim()],
-    [`${elementParam}_url`, hrefAttr],
+    [`${elementParam}_url`, sanitizeUrl(hrefAttr)],
     [`${elementParam}_domain`, hostname],
     [`${param.eventParam}.outbound`, `${isExternal}`],
-    [param.enagementTime, getActiveTime()],
   ];
 
   if (fileExtension) {
     eventParams = eventParams.concat([
-      [`${param.eventParam}.file_name`, pathname || fileUrl],
+      [`${param.eventParam}.file_name`, pathname],
       [`${param.eventParam}.file_extension`, fileExtension],
     ]);
   }
@@ -226,12 +256,8 @@ function onClickEvent(trackingId: string, event: Event) {
  * -------------------------------- */
 
 function onBlurEvent() {
-  const timeIndex = engagementTimes.length - 1;
-  const [, isHidden] = engagementTimes[timeIndex];
-
-  if (!isHidden) {
-    engagementTimes[timeIndex].push(Date.now());
-  }
+  activeMilliseconds = getActiveTime();
+  activeSince = undefined;
 }
 
 /* -----------------------------------
@@ -241,12 +267,7 @@ function onBlurEvent() {
  * -------------------------------- */
 
 function onFocusEvent() {
-  const timeIndex = engagementTimes.length - 1;
-  const [, isHidden] = engagementTimes[timeIndex];
-
-  if (isHidden) {
-    engagementTimes.push([Date.now()]);
-  }
+  if (activeSince === undefined && document.visibilityState !== 'hidden') activeSince = Date.now();
 }
 
 /* -----------------------------------
@@ -255,23 +276,13 @@ function onFocusEvent() {
  *
  * -------------------------------- */
 
-function onVisibilityChange() {
-  const timeIndex = engagementTimes.length - 1;
-  const [, isHidden] = engagementTimes[timeIndex];
-  const stateIndex = ['hidden', 'visible'].indexOf(document.visibilityState);
-  const isVisible = Boolean(stateIndex);
-
-  if (stateIndex === -1) {
+function onVisibilityChange(trackingId: string) {
+  if (document.visibilityState === 'hidden') {
+    onBlurEvent();
+    onUnloadEvent(trackingId);
     return;
   }
-
-  if (!isVisible) {
-    !isHidden && engagementTimes[timeIndex].push(Date.now());
-
-    return;
-  }
-
-  isHidden && engagementTimes.push([Date.now()]);
+  if (document.visibilityState === 'visible') onFocusEvent();
 }
 
 /* -----------------------------------
@@ -281,9 +292,10 @@ function onVisibilityChange() {
  * -------------------------------- */
 
 const onScrollEvent = debounce((trackingId: string) => {
+  if (!analyticsGranted()) return;
   const percentage = getScrollPercentage();
 
-  if (percentage < 90) {
+  if (scrolled || percentage < 90) {
     return;
   }
 
@@ -294,7 +306,7 @@ const onScrollEvent = debounce((trackingId: string) => {
     event: eventParams,
   });
 
-  document.removeEventListener('scroll', scrollHandler);
+  scrolled = true;
 });
 
 /* -----------------------------------
@@ -304,12 +316,41 @@ const onScrollEvent = debounce((trackingId: string) => {
  * -------------------------------- */
 
 function onUnloadEvent(trackingId: string) {
-  const eventParams: EventParams = [[param.enagementTime, getActiveTime()]];
-
+  if (getActiveTime() <= sentEngagement) return;
   track(trackingId, {
     type: eventKeys.userEngagement,
-    event: eventParams,
   });
+}
+
+function formEvent(trackingId: string, event: Event) {
+  if (!analyticsGranted()) return;
+  const target = event.target instanceof Element ? event.target : null;
+  const form = target?.closest('form');
+  if (!(form instanceof HTMLFormElement) || form.closest('[data-analytics-ignore]')) return;
+  const fields = { 'ep.form_id': form.id };
+  if (!startedForms.has(form)) {
+    startedForms.add(form);
+    track(trackingId, { type: 'form_start', event: fields });
+  }
+  if (event.type === 'submit') track(trackingId, { type: 'form_submit', event: fields });
+}
+
+function bindNavigation(trackingId: string) {
+  const onNavigation = () => {
+    const next = sanitizeUrl(document.location.href);
+    if (next === lastPage) return;
+    previousPage = lastPage;
+    track(trackingId);
+  };
+  for (const key of ['pushState', 'replaceState'] as const) {
+    const original = history[key];
+    history[key] = function (...args: Parameters<History[typeof key]>) {
+      const result = original.apply(this, args);
+      onNavigation();
+      return result;
+    };
+  }
+  window.addEventListener('popstate', onNavigation);
 }
 
 /* -----------------------------------
@@ -327,13 +368,23 @@ function bindEvents(trackingId: string) {
   scrollHandler = onScrollEvent.bind(null, trackingId);
   unloadHandler = onUnloadEvent.bind(null, trackingId);
 
-  document.addEventListener('visibilitychange', onVisibilityChange);
+  document.addEventListener('visibilitychange', onVisibilityChange.bind(null, trackingId));
   document.addEventListener('scroll', scrollHandler);
   document.addEventListener('click', clickHandler);
 
   window.addEventListener('blur', onBlurEvent);
   window.addEventListener('focus', onFocusEvent);
-  window.addEventListener('beforeunload', unloadHandler);
+  window.addEventListener('pagehide', () => {
+    onBlurEvent();
+    unloadHandler(new Event('pagehide'));
+  });
+  window.addEventListener('pageshow', onFocusEvent);
+  if (window.minimalAnalytics?.trackForms !== false) {
+    document.addEventListener('focusin', formEvent.bind(null, trackingId), true);
+    document.addEventListener('input', formEvent.bind(null, trackingId), true);
+    document.addEventListener('submit', formEvent.bind(null, trackingId), true);
+  }
+  if (window.minimalAnalytics?.trackNavigation !== false) bindNavigation(trackingId);
 }
 
 /* -----------------------------------
@@ -342,10 +393,11 @@ function bindEvents(trackingId: string) {
  *
  * -------------------------------- */
 
-function track(trackingId: string, props?: IProps);
-function track(props?: IProps);
-function track(...args: any[]) {
-  const [trackingId, { type, event, debug }] = getArguments(args);
+function track(trackingId: string, props?: TrackOptions): void;
+function track(props?: TrackOptions): void;
+function track(first?: string | TrackOptions, second?: TrackOptions): void {
+  if (!isBrowser || typeof document === 'undefined' || !analyticsGranted()) return;
+  const [trackingId, { type, event, debug, keyEvent }] = getArguments([first, second]);
 
   if (!trackingId) {
     console.error('GA4: Tracking ID is missing or undefined');
@@ -353,14 +405,26 @@ function track(...args: any[]) {
     return;
   }
 
-  const queryParams = getQueryParams(trackingId, { type, event, debug });
+  if (type === eventKeys.pageView) {
+    pageId = getRandomId();
+    hitCount = 0;
+    scrolled = false;
+    lastPage = sanitizeUrl(document.location.href);
+  }
+  if (!trackCalled) onFocusEvent();
+  const queryParams = getQueryParams(trackingId, { type, event, debug, keyEvent });
   const endpoint = window.minimalAnalytics?.analyticsEndpoint || analyticsEndpoint;
 
-  navigator.sendBeacon(`${endpoint}?${queryParams}`);
+  send(`${endpoint}?${queryParams}`);
 
   bindEvents(trackingId);
 
   trackCalled = true;
+  if (type === eventKeys.pageView && window.minimalAnalytics?.searchTracking) {
+    const search = new URLSearchParams(document.location.search);
+    const term = searchTerms.map(key => search.get(key)).find(Boolean);
+    if (term) track(trackingId, { type: eventKeys.viewSearchResults, event: { 'ep.search_term': term.slice(0, 100) } });
+  }
 }
 
 /* -----------------------------------
@@ -389,4 +453,5 @@ if (autoTrack) {
  *
  * -------------------------------- */
 
-export { EventParams, track };
+export { track };
+export type { EventParams, TrackOptions };

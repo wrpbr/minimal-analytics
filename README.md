@@ -1,14 +1,26 @@
-# minimal-analytics
+# minimal-analytics — wrpbr fork
 
-[![CI](https://github.com/jahilldev/minimal-analytics/actions/workflows/ci.yml/badge.svg?)](https://github.com/jahilldev/minimal-analytics/actions/workflows/ci.yml)
+[![CI](https://github.com/wrpbr/minimal-analytics/actions/workflows/ci.yml/badge.svg)](https://github.com/wrpbr/minimal-analytics/actions/workflows/ci.yml)
 
-This project aims to provide minimal implementations of popular analytics libraries. It's aimed at users who want to reduce the impact of third-party JavaScript on their project, without losing core analytics data. If you require more advance tracking, it's recommended to use the official library instead.
+A small browser tracker for basic Google Analytics 4 events. This fork repairs session handling, form tracking, navigation, transport failures and URL filtering. It keeps the original MIT license and Git history from [jahilldev/minimal-analytics](https://github.com/jahilldev/minimal-analytics).
 
-# Getting Started
+Use the [GA4 setup guide](packages/ga4/README.md) to download a pinned release and host the script yourself. The build provides browser, ESM and CommonJS files. It limits the browser file to 8 KiB with gzip.
 
-Depending on your preferred service, visit the relevant package below and follow setup instructions:
+Version 2 requires an analytics consent grant. It removes private query fields from URLs. Read the migration notes before you replace an existing tracker.
 
-| Library | Package                                                                                                  | Ready    |
-| ------- | -------------------------------------------------------------------------------------------------------- | -------- |
-| GA4     | [@minimal-analytics/ga4](https://github.com/jahilldev/minimal-analytics/tree/main/packages/ga4#readme)   | Yes      |
-| Heap    | [@minimal-analytics/heap](https://github.com/jahilldev/minimal-analytics/tree/main/packages/heap#readme) | No (TBD) |
+This is an unofficial client for Google's browser collection endpoint. It does not provide full Google tag, advertising, Consent Mode v2 or report parity. Validate your events and reports in a test GA4 property before production use. Do not load both trackers on the same page.
+
+## Development
+
+Use Node 26.9.0 and the pnpm version pinned in `package.json`. Run build and tests in a disposable container.
+
+```sh
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm verify
+```
+
+CI audits every locked dependency with Socket before installation. It rejects an incomplete analysis or a policy alert. The pinned Socket CLI is the bootstrap tool. CI then checks types, lint, browser behavior and compressed size. It uploads the tested files and SHA-256 checksums.
+
+The old Yarn lockfiles and build tools have been replaced by pnpm, TypeScript 7, Oxlint, esbuild and Vitest. The legacy tests remain in Git history. The current tests run against the built browser file, with all network transports intercepted.
+
+See [CHANGELOG.md](CHANGELOG.md) for the fixes and their limits. The unfinished Heap package is retained as historical source. It is private and is not built or released.

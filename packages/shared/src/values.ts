@@ -1,4 +1,5 @@
 import { getRandomId } from './utility';
+import { readStorage, writeStorage } from './storage';
 
 /* -----------------------------------
  *
@@ -6,7 +7,7 @@ import { getRandomId } from './utility';
  *
  * -------------------------------- */
 
-type ParamValue = string | number | undefined | null;
+type ParamValue = string | number | boolean | undefined | null;
 type EventParams = Record<string, ParamValue> | [string, ParamValue][];
 
 /* -----------------------------------
@@ -41,10 +42,10 @@ function getDocument() {
 
 function getClientId(key = clientKey) {
   const clientId = getRandomId();
-  const storedValue = localStorage.getItem(key);
+  const storedValue = readStorage(key);
 
   if (!storedValue) {
-    localStorage.setItem(key, clientId);
+    writeStorage(key, clientId);
 
     return clientId;
   }
@@ -60,10 +61,10 @@ function getClientId(key = clientKey) {
 
 function getSessionId(key = sessionKey) {
   const sessionId = getRandomId();
-  const storedValue = sessionStorage.getItem(key);
+  const storedValue = readStorage(key, 'session');
 
   if (!storedValue) {
-    sessionStorage.setItem(key, sessionId);
+    writeStorage(key, sessionId, 'session');
 
     return sessionId;
   }
@@ -79,13 +80,13 @@ function getSessionId(key = sessionKey) {
 
 function getSessionCount(key = counterKey) {
   let sessionCount = '1';
-  const storedValue = sessionStorage.getItem(key);
+  const storedValue = readStorage(key, 'session');
 
   if (storedValue) {
     sessionCount = `${+storedValue + 1}`;
   }
 
-  sessionStorage.setItem(key, sessionCount);
+  writeStorage(key, sessionCount, 'session');
 
   return sessionCount;
 }
@@ -97,9 +98,9 @@ function getSessionCount(key = counterKey) {
  * -------------------------------- */
 
 function getSessionState(firstEvent: boolean) {
-  const firstVisit = !localStorage.getItem(clientKey) ? '1' : void 0;
-  const sessionStart = !sessionStorage.getItem(sessionKey) ? '1' : void 0;
-  let sessionCount = sessionStorage.getItem(counterKey) || '1';
+  const firstVisit = !readStorage(clientKey) ? '1' : void 0;
+  const sessionStart = !readStorage(sessionKey, 'session') ? '1' : void 0;
+  let sessionCount = readStorage(counterKey, 'session') || '1';
 
   if (firstEvent) {
     sessionCount = getSessionCount();
@@ -114,12 +115,11 @@ function getSessionState(firstEvent: boolean) {
  *
  * -------------------------------- */
 
-function getEventParams(event: EventParams) {
-  if (Array.isArray(event)) {
-    return event.map((items) => items.map((item) => item?.toString()));
-  }
-
-  return Object.keys(event).map((key) => [key, `${event[key]}`]);
+function getEventParams(event: EventParams): [string, string][] {
+  const entries = Array.isArray(event) ? event : Object.entries(event);
+  return entries
+    .filter(([, value]) => value != null)
+    .map(([key, value]) => [key, String(value)]);
 }
 
 /* -----------------------------------

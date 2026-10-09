@@ -5,3 +5,5 @@ yarn-error.log
 package-lock.json
 packages/*/dist
 packages/*/tests/coverage
+build/
+packages/ga4/LICENSE

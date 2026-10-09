@@ -1,6 +1,7 @@
 {
   "name": "@minimal-analytics/heap",
   "version": "0.1.4",
+  "private": true,
   "description": "A tiny (1KB GZipped) version of Heap, complete with page view and input tracking",
   "author": "James Hill <jahill@groupon.com>",
   "homepage": "https://github.com/jahilldev/minimal-analytics/tree/main/packages/heap#readme",
@@ -37,14 +38,9 @@
     "node": ">=16.3.0"
   },
   "scripts": {
-    "start": "run-s clean watch",
-    "build": "webpack --mode=production",
-    "watch": "webpack --watch",
-    "clean": "rimraf ./dist",
-    "lint": "eslint",
-    "test": "jest"
+    "test": "pnpm --workspace-root test"
   },
   "devDependencies": {
-    "@minimal-analytics/shared": "1.0.0"
+    "@minimal-analytics/shared": "workspace:*"
   }
 }

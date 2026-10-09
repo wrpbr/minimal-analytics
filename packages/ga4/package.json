@@ -1,22 +1,33 @@
 {
-  "name": "@minimal-analytics/ga4",
-  "version": "1.8.7",
-  "description": "A tiny (2KB GZipped) version of GA4, complete with page view, engagement, scroll and click tracking",
+  "name": "@wrpbr/minimal-analytics-ga4",
+  "version": "2.0.0-wrp.1",
+  "description": "A small GA4 browser tracker with session, form, navigation and privacy fixes",
   "author": "James Hill <contact@jameshill.dev>",
-  "homepage": "https://github.com/jahilldev/minimal-analytics/tree/main/packages/ga4#readme",
+  "homepage": "https://github.com/wrpbr/minimal-analytics/tree/main/packages/ga4#readme",
   "license": "MIT",
-  "main": "./dist/index.js",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "type": "module",
   "types": "./dist/index.d.ts",
-  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./browser": "./dist/browser.js"
+  },
+  "sideEffects": true,
   "directories": {
     "lib": "src",
     "test": "tests"
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE"
   ],
   "bugs": {
-    "url": "https://github.com/jahilldev/minimal-analytics/issues"
+    "url": "https://github.com/wrpbr/minimal-analytics/issues"
   },
   "keywords": [
     "ga4",
@@ -33,20 +44,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jahilldev/minimal-analytics.git"
+    "url": "git+https://github.com/wrpbr/minimal-analytics.git"
   },
   "engines": {
-    "node": ">=16.3.0"
+    "node": ">=18"
   },
   "scripts": {
-    "start": "run-s clean watch",
-    "build": "webpack --mode=production",
-    "watch": "webpack --watch",
-    "clean": "rimraf ./dist",
-    "lint": "eslint",
-    "test": "jest"
+    "build": "pnpm --workspace-root build",
+    "test": "pnpm --workspace-root test"
   },
   "devDependencies": {
-    "@minimal-analytics/shared": "1.0.0"
+    "@minimal-analytics/shared": "workspace:*"
   }
 }

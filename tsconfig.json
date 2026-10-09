@@ -1,18 +1,15 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
-    "declaration": true,
-    "noImplicitAny": false,
-    "removeComments": true,
-    "noLib": false,
-    "noEmitOnError": true,
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
+    "module": "ESNext",
+    "strict": true,
     "esModuleInterop": true,
-    "moduleResolution": "node",
-    "target": "ES2018",
-    "sourceMap": true,
-    "lib": ["DOM", "ES2015", "ES2016", "ES2017", "ES2018", "ES2019"]
+    "moduleResolution": "bundler",
+    "target": "ES2020",
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
+    "types": ["node", "vitest/globals"],
+    "paths": {
+      "@minimal-analytics/shared": ["./packages/shared/src/index.ts"]
+    }
   },
-  "exclude": ["node_modules", "webpack.config.ts", "tests", "./dist"]
+  "include": ["packages/ga4/src", "packages/shared/src", "tests", "scripts", "vitest.config.mts"]
 }

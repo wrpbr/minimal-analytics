@@ -7,32 +7,36 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-test:
     name: Build & Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '16.x'
-
-      - name: Cached dependencies
-        uses: actions/cache@v2
+          node-version: '26.9.0'
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          path: ~/.npm
-          key: npm-${{ hashFiles('yarn.lock') }}
-          restore-keys: npm-
-
-      - name: Installing dependencies
-        run: yarn
-
-      - name: Linting codebase
-        run: yarn lint
-
-      - name: Building packages
-        run: yarn build
-
-      - name: Running unit tests
-        run: yarn test
+          version: '11.24.0'
+          run_install: false
+      - name: Bootstrap pinned Socket CLI
+        run: pnpm add --global --ignore-scripts socket@1.1.162
+      - name: Audit every locked dependency before installation
+        run: MINIMAL_SOCKET_PATH="$(pnpm root -g)/socket" node scripts/socket-audit.mts
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify source and browser artifacts
+        run: pnpm verify
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ga4-${{ github.sha }}
+          path: packages/ga4/dist/
+          if-no-files-found: error
+          retention-days: 14
