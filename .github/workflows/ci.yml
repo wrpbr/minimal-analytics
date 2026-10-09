@@ -24,7 +24,6 @@ jobs:
           node-version: '26.9.0'
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: '11.24.0'
           run_install: false
       - name: Bootstrap pinned Socket CLI
         run: pnpm add --global --ignore-scripts socket@1.1.162
